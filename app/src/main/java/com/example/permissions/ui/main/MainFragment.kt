@@ -2,9 +2,11 @@ package com.example.permissions.ui.main
 
 import android.content.ContentValues
 import android.content.pm.PackageManager
+import android.database.Cursor
 import android.os.Build
 import androidx.lifecycle.ViewModelProvider
 import android.os.Bundle
+import android.provider.ContactsContract
 import android.provider.MediaStore
 import androidx.fragment.app.Fragment
 import android.view.LayoutInflater
@@ -41,11 +43,68 @@ class MainFragment : Fragment() {
     private var imageCapture: ImageCapture? = null
     private lateinit var viewModel: MainViewModel
     private lateinit var executor: Executor
-    private val launcher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { map ->
-        if (map.values.all { it })
-            startCamera()
+    private val launcher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (isGranted)
+            getContacts()
         else
             Toast.makeText(context, "permission is not Granted", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun getContacts() {
+        val contentUri = ContactsContract.Contacts.CONTENT_URI
+        val contactProjection = arrayOf(
+            ContactsContract.Contacts._ID,
+            ContactsContract.Contacts.DISPLAY_NAME,
+            ContactsContract.Contacts.HAS_PHONE_NUMBER,
+        )
+
+        val phoneUri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+        val phoneProjection = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.NUMBER
+        )
+
+        val phoneSelection = ContactsContract.CommonDataKinds.Phone.CONTACT_ID + "=?"
+
+        val stringBuilder = StringBuilder()
+
+        requireActivity().contentResolver.query(
+            contentUri,
+            contactProjection,
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            val idIndex = cursor.getColumnIndex(ContactsContract.Contacts._ID)
+            val nameIndex = cursor.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME)
+            val hasPhoneIndex = cursor.getColumnIndex(ContactsContract.Contacts.HAS_PHONE_NUMBER)
+
+            while (cursor.moveToNext()) {
+                stringBuilder.append(": ")
+
+                val hasPhone = cursor.getInt(hasPhoneIndex) > 0
+                if (hasPhone) {
+
+                    val contactId = cursor.getString(idIndex)
+                    requireActivity().contentResolver. query(
+                        phoneUri,
+                        phoneProjection,
+                        phoneSelection,
+                        arrayOf(contactId),
+                        null
+                    )?.use {phoneCursor ->
+                        val numberIndex = phoneCursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                        while (phoneCursor.moveToNext()) {
+                            stringBuilder.append(phoneCursor.getString(numberIndex))
+                                .append(", ")
+                        }
+                    }
+                } else {
+                    stringBuilder.append("no phone")
+                }
+                stringBuilder.append("\n")
+            }
+        }
+        binding.textView.text = stringBuilder.toString()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,71 +124,18 @@ class MainFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         executor = ContextCompat.getMainExecutor(requireContext())
-        binding.takePhotoButton.setOnClickListener {
-            takePhoto()
-        }
         checkPermissions()
     }
 
-    private fun takePhoto() {
-        val imageCapture = imageCapture ?: return
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-        }
-
-        val outputOptions = ImageCapture.OutputFileOptions
-            .Builder(requireActivity().contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues).build()
-
-        imageCapture.takePicture(
-            outputOptions,
-            executor,
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    Toast.makeText(requireContext(), "Photo Saved on: ${outputFileResults.savedUri}", Toast.LENGTH_SHORT).show()
-
-                    Glide.with(requireActivity())
-                        .load(outputFileResults.savedUri)
-                        .circleCrop()
-                        .into(binding.imagePreview)
-                }
-
-                override fun onError(exception: ImageCaptureException) {
-                    Toast.makeText(requireContext(), "Photo FAILED: ${exception.message}", Toast.LENGTH_SHORT).show()
-                    exception.printStackTrace()
-                }
-            }
-        )
-    }
-
-    private fun startCamera() {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(requireContext())
-        cameraProviderFuture.addListener({
-            val cameraProvider = cameraProviderFuture.get()
-            val preview = Preview.Builder().build()
-            preview.setSurfaceProvider(binding.viewFinder.surfaceProvider)
-            imageCapture = ImageCapture.Builder().build()
-
-            cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
-                requireActivity(),
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                imageCapture
-            )
-        }, executor)
-    }
-
     private fun checkPermissions() {
-        val isAllGranted = REQUEST_PERMISSIONS.all {permission ->
+        return if (
             ContextCompat.checkSelfPermission(requireContext(),
-                permission) == PackageManager.PERMISSION_GRANTED
-        }
-        if (isAllGranted) {
-            startCamera()
-            Toast.makeText(context, "permission is Granted", Toast.LENGTH_SHORT).show()
+                android.Manifest.permission.READ_CONTACTS
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            getContacts()
         } else {
-            launcher.launch(REQUEST_PERMISSIONS)
+            launcher.launch(android.Manifest.permission.READ_CONTACTS)
         }
     }
 
@@ -140,12 +146,6 @@ class MainFragment : Fragment() {
 
     companion object {
         fun newInstance() = MainFragment()
-        private val REQUEST_PERMISSIONS: Array<String> = buildList {
-            add(android.Manifest.permission.CAMERA)
-            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-                add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            }
-        }.toTypedArray()
     }
 
 }
